@@ -18,12 +18,13 @@ torch.cuda.manual_seed(42)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
+
 class QUADMNIST(torchvision.datasets.MNIST):
 
     def __getitem__(self, index: int) -> Tuple[Any, Any]:
         rstate = random.getstate()
         random.seed(index)
-        i_s = [0,0,0,0] 
+        i_s = [0, 0, 0, 0]
         for i in range(4):
             i_s[i] = random.randint(0, super().__len__() - 1)
             # i_s[i] = index % super().__len__()
@@ -124,17 +125,17 @@ def load_data(train_dir, val_dir, args):
 
     transforms = torchvision.transforms.v2.Compose(
         [
-            torchvision.transforms.v2.PILToTensor(),
+            torchvision.transforms.v2.ToImage(),
             torchvision.transforms.v2.ToDtype(torch.float32, scale=True),
             # torchvision.transforms.v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            torchvision.transforms.v2.ToPureTensor(),
+            # torchvision.transforms.v2.ToPureTensor(),
         ]
     )
 
     target_transforms = torchvision.transforms.v2.Compose(
         [
             torchvision.transforms.v2.ToDtype(torch.int32, scale=False),
-            torchvision.transforms.v2.ToPureTensor(),
+            # torchvision.transforms.v2.ToPureTensor(),
         ]
     )
 
@@ -155,8 +156,8 @@ def load_data(train_dir, val_dir, args):
     )
 
     print("Creating data loaders")
-    train_sampler =None# torch.utils.data.RandomSampler(dataset)
-    test_sampler = None# torch.utils.data.SequentialSampler(dataset_test)
+    train_sampler = torch.utils.data.RandomSampler(dataset)
+    test_sampler = torch.utils.data.SequentialSampler(dataset_test)
 
     return dataset, dataset_test, train_sampler, test_sampler
 
@@ -173,16 +174,20 @@ def main(args):
         train_dir, val_dir, args
     )
 
-    # data_loader = torch.utils.data.DataLoader(
-    #     dataset,
-    #     batch_size=args.batch_size,
-    #     sampler=train_sampler,
-    #     num_workers=args.workers,
-    #     pin_memory=True,
-    # )
-    # data_loader_test = torch.utils.data.DataLoader(
-    #     dataset_test, batch_size=args.batch_size, sampler=test_sampler, num_workers=args.workers, pin_memory=True
-    # )
+    data_loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        # sampler=train_sampler,
+        num_workers=args.workers,
+        pin_memory=True,
+    )
+    data_loader_test = torch.utils.data.DataLoader(
+        dataset_test,
+        batch_size=args.batch_size,
+        # sampler=test_sampler,
+        num_workers=args.workers,
+        pin_memory=True,
+    )
 
     num_classes = 10000  # len(dataset.classes)
 
@@ -190,10 +195,10 @@ def main(args):
     model = VisionTransformer(
         image_size=56,
         patch_size=28,
-        num_layers=2,  # 12,
-        num_heads=2,  # 12,
-        hidden_dim=64,  # 768,
-        mlp_dim=128,  # 3072,
+        num_layers=6,  # 12,
+        num_heads=6,  # 12,
+        hidden_dim=384,  # 768,
+        mlp_dim=1536,  # 3072,
         num_classes=num_classes,
     ).to(device)
 

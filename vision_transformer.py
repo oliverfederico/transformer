@@ -27,7 +27,7 @@ class EncoderBlock(nn.Module):
         self.mlp = torchvision.ops.MLP(
             hidden_dim,
             [mlp_dim, hidden_dim],
-            activation_layer=nn.GELU,
+            activation_layer=nn.ReLU,  # GELU
             dropout=dropout,
         )
 
