@@ -3,12 +3,48 @@ import torch.nn as nn
 import time
 import datetime
 import os
-
+import random
 import torchvision.transforms.v2
 import utils
 import warnings
 from vision_transformer import VisionTransformer
 import torchvision
+from typing import Any, Tuple
+from dataload import show_image
+
+# Set random seed for reproducibility
+torch.manual_seed(42)
+torch.cuda.manual_seed(42)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
+class QUADMNIST(torchvision.datasets.MNIST):
+
+    def __getitem__(self, index: int) -> Tuple[Any, Any]:
+        rstate = random.getstate()
+        random.seed(index)
+        i_s = [0,0,0,0] 
+        for i in range(4):
+            i_s[i] = random.randint(0, super().__len__() - 1)
+            # i_s[i] = index % super().__len__()
+            # index = index // super().__len__()
+        random.setstate(rstate)
+        tl_img, tl_lab = super().__getitem__(i_s[0])
+        tr_img, tr_lab = super().__getitem__(i_s[1])
+        bl_img, bl_lab = super().__getitem__(i_s[2])
+        br_img, br_lab = super().__getitem__(i_s[3])
+        top_row = torch.concat([tl_img, tr_img], dim=2)
+        bottom_row = torch.concat([bl_img, br_img], dim=2)
+        img = torch.cat([top_row, bottom_row], dim=1)
+        # print(img.shape)
+        # # Convert tensor to PIL Image for visualization
+        # img = torchvision.transforms.functional.to_pil_image(img)
+        # show_image(img)
+
+        return img, tl_lab * 1000 + tr_lab * 100 + bl_lab * 10 + br_lab
+
+    # def __len__(self) -> int:
+    #     return super().__len__()
 
 
 def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch):
@@ -18,7 +54,9 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch):
     metric_logger.add_meter("img/s", utils.SmoothedValue(window_size=10, fmt="{value}"))
 
     header = f"Epoch: [{epoch}]"
-    for i, (image, target) in enumerate(metric_logger.log_every(data_loader, args.print_freq, header)):
+    for i, (image, target) in enumerate(
+        metric_logger.log_every(data_loader, args.print_freq, header)
+    ):
         start_time = time.time()
         image, target = image.to(device), target.to(device)
         with torch.amp.autocast(device_type=device.type, enabled=False):
@@ -58,14 +96,13 @@ def evaluate(model, criterion, data_loader, device, print_freq=100, log_suffix="
             metric_logger.meters["acc1"].update(acc1.item(), n=batch_size)
             metric_logger.meters["acc5"].update(acc5.item(), n=batch_size)
             num_processed_samples += batch_size
-    # gather the stats from all processes
+        # gather the stats from all processes
 
-    # num_processed_samples = torch.distributed.reduce_across_processes(num_processed_samples)
-    # if (
-    #     hasattr(data_loader.dataset, "__len__")
-    #     and len(data_loader.dataset) != num_processed_samples
-    #     and torch.distributed.get_rank() == 0
-    # ):
+        # if (
+        #     hasattr(data_loader.dataset, "__len__")
+        #     and len(data_loader.dataset) != num_processed_samples
+        #     and torch.distributed.get_rank() == 0
+        # ):
         # See FIXME above
         warnings.warn(
             f"It looks like the dataset has {len(data_loader)} samples, but {num_processed_samples} "
@@ -74,9 +111,9 @@ def evaluate(model, criterion, data_loader, device, print_freq=100, log_suffix="
             "Setting the world size to 1 is always a safe bet."
         )
 
-    metric_logger.synchronize_between_processes()
-
-    print(f"{header} Acc@1 {metric_logger.acc1.global_avg:.3f} Acc@5 {metric_logger.acc5.global_avg:.3f}")
+    print(
+        f"{header} Acc@1 {metric_logger.acc1.global_avg:.3f} Acc@5 {metric_logger.acc5.global_avg:.3f}"
+    )
     return metric_logger.acc1.global_avg
 
 
@@ -85,41 +122,41 @@ def load_data(train_dir, val_dir, args):
     print("Loading training data")
     st = time.time()
 
-    transforms = torchvision.transforms.v2.Compose([
-        torchvision.transforms.v2.PILToTensor(),
-        torchvision.transforms.v2.ToDtype(torch.float32, scale=True),
-        # torchvision.transforms.v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        torchvision.transforms.v2.ToPureTensor()
-    ])
+    transforms = torchvision.transforms.v2.Compose(
+        [
+            torchvision.transforms.v2.PILToTensor(),
+            torchvision.transforms.v2.ToDtype(torch.float32, scale=True),
+            # torchvision.transforms.v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            torchvision.transforms.v2.ToPureTensor(),
+        ]
+    )
 
-    target_transforms = torchvision.transforms.v2.Compose([
-        torchvision.transforms.v2.ToDtype(torch.int32, scale=False),
-        torchvision.transforms.v2.ToPureTensor()
-    ])
+    target_transforms = torchvision.transforms.v2.Compose(
+        [
+            torchvision.transforms.v2.ToDtype(torch.int32, scale=False),
+            torchvision.transforms.v2.ToPureTensor(),
+        ]
+    )
 
-    dataset = torchvision.datasets.MNIST(
-        train_dir,
-        train=True,
-        transform=transforms,
-        target_transform=torch.tensor
+    dataset = QUADMNIST(
+        train_dir, train=True, transform=transforms, target_transform=torch.tensor
     )
     # dataset = torchvision.datasets.wrap_dataset_for_transforms_v2(dataset)
-    
 
     print("Took", time.time() - st)
 
     print("Loading validation data")
-    dataset_test = torchvision.datasets.MNIST(
+    dataset_test = QUADMNIST(
         train_dir,
         train=False,
         transform=transforms,
         target_transform=torch.tensor
         # target_transform=target_transforms
     )
-    
+
     print("Creating data loaders")
-    train_sampler = torch.utils.data.RandomSampler(dataset)
-    test_sampler = torch.utils.data.SequentialSampler(dataset_test)
+    train_sampler =None# torch.utils.data.RandomSampler(dataset)
+    test_sampler = None# torch.utils.data.SequentialSampler(dataset_test)
 
     return dataset, dataset_test, train_sampler, test_sampler
 
@@ -132,12 +169,9 @@ def main(args):
 
     train_dir = os.path.join(args.data_path, "")
     val_dir = os.path.join(args.data_path, "")
-    dataset, dataset_test, train_sampler, test_sampler = load_data(train_dir, val_dir, args)
-    dataset.data = dataset.data[:60]
-    dataset.targets = dataset.targets[:60]
-
-    dataset_test.data = dataset_test.data[:10]
-    dataset_test.targets = dataset_test.targets[:10]
+    dataset, dataset_test, train_sampler, test_sampler = load_data(
+        train_dir, val_dir, args
+    )
 
     # data_loader = torch.utils.data.DataLoader(
     #     dataset,
@@ -148,18 +182,18 @@ def main(args):
     # )
     # data_loader_test = torch.utils.data.DataLoader(
     #     dataset_test, batch_size=args.batch_size, sampler=test_sampler, num_workers=args.workers, pin_memory=True
-    # )   
+    # )
 
-    num_classes = len(dataset.classes)  # 10000
+    num_classes = 10000  # len(dataset.classes)
 
     print("Creating model")
     model = VisionTransformer(
-        image_size=28,
-        patch_size=14,
-        num_layers=2,#12,
-        num_heads=2,#12,
-        hidden_dim=64,#768,
-        mlp_dim=128,#3072,
+        image_size=56,
+        patch_size=28,
+        num_layers=2,  # 12,
+        num_heads=2,  # 12,
+        hidden_dim=64,  # 768,
+        mlp_dim=128,  # 3072,
         num_classes=num_classes,
     ).to(device)
 
@@ -203,7 +237,7 @@ def get_args_parser(add_help=True):
         "--data-path", default="./datasets", type=str, help="dataset path"
     )
     parser.add_argument("--batch-size", default=1, type=int, help="batch size")
-    parser.add_argument("--epochs", default=5, type=int, help="number of epochs")
+    parser.add_argument("--epochs", default=1, type=int, help="number of epochs")
     parser.add_argument("--workers", default=4, type=int, help="number of workers")
     parser.add_argument("--print-freq", default=10, type=int, help="print frequency")
     return parser
