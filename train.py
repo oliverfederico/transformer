@@ -13,23 +13,23 @@ from typing import Any, Tuple
 from dataload import show_image
 
 # Set random seed for reproducibility
-torch.manual_seed(42)
-torch.cuda.manual_seed(42)
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
+# torch.manual_seed(42)
+# torch.cuda.manual_seed(42)
+# torch.backends.cudnn.deterministic = False
+# torch.backends.cudnn.benchmark = True
 
 
 class QUADMNIST(torchvision.datasets.MNIST):
 
     def __getitem__(self, index: int) -> Tuple[Any, Any]:
-        rstate = random.getstate()
-        random.seed(index)
+        # rstate = random.getstate()
+        # random.seed(index)
         i_s = [0, 0, 0, 0]
         for i in range(4):
             i_s[i] = random.randint(0, super().__len__() - 1)
             # i_s[i] = index % super().__len__()
             # index = index // super().__len__()
-        random.setstate(rstate)
+        # random.setstate(rstate)
         tl_img, tl_lab = super().__getitem__(i_s[0])
         tr_img, tr_lab = super().__getitem__(i_s[1])
         bl_img, bl_lab = super().__getitem__(i_s[2])
@@ -99,18 +99,18 @@ def evaluate(model, criterion, data_loader, device, print_freq=100, log_suffix="
             num_processed_samples += batch_size
         # gather the stats from all processes
 
-        # if (
-        #     hasattr(data_loader.dataset, "__len__")
-        #     and len(data_loader.dataset) != num_processed_samples
-        #     and torch.distributed.get_rank() == 0
-        # ):
-        # See FIXME above
-        warnings.warn(
-            f"It looks like the dataset has {len(data_loader)} samples, but {num_processed_samples} "
-            "samples were used for the validation, which might bias the results. "
-            "Try adjusting the batch size and / or the world size. "
-            "Setting the world size to 1 is always a safe bet."
-        )
+        if (
+            hasattr(data_loader.dataset, "__len__")
+            and len(data_loader.dataset) != num_processed_samples
+            # and torch.distributed.get_rank() == 0
+        ):
+            # See FIXME above
+            warnings.warn(
+                f"It looks like the dataset has {len(data_loader)} samples, but {num_processed_samples} "
+                "samples were used for the validation, which might bias the results. "
+                "Try adjusting the batch size and / or the world size. "
+                "Setting the world size to 1 is always a safe bet."
+            )
 
     print(
         f"{header} Acc@1 {metric_logger.acc1.global_avg:.3f} Acc@5 {metric_logger.acc5.global_avg:.3f}"
@@ -151,7 +151,7 @@ def load_data(train_dir, val_dir, args):
         train_dir,
         train=False,
         transform=transforms,
-        target_transform=torch.tensor
+        target_transform=torch.tensor,
         # target_transform=target_transforms
     )
 
@@ -180,6 +180,8 @@ def main(args):
         # sampler=train_sampler,
         num_workers=args.workers,
         pin_memory=True,
+        drop_last=True,
+        in_order=False
     )
     data_loader_test = torch.utils.data.DataLoader(
         dataset_test,
@@ -187,6 +189,8 @@ def main(args):
         # sampler=test_sampler,
         num_workers=args.workers,
         pin_memory=True,
+        drop_last=True,
+        in_order=False
     )
 
     num_classes = 10000  # len(dataset.classes)
@@ -194,11 +198,11 @@ def main(args):
     print("Creating model")
     model = VisionTransformer(
         image_size=56,
-        patch_size=28,
-        num_layers=6,  # 12,
-        num_heads=6,  # 12,
-        hidden_dim=384,  # 768,
-        mlp_dim=1536,  # 3072,
+        patch_size=14,
+        num_layers=4,  # 12,
+        num_heads=4,  # 12,
+        hidden_dim=64,  # 768,
+        mlp_dim=128,  # 3072,
         num_classes=num_classes,
     ).to(device)
 
@@ -207,7 +211,7 @@ def main(args):
     criterion = nn.CrossEntropyLoss()
 
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=0.0008, betas=(0.9, 0.999), weight_decay=0.1
+        model.parameters(), lr=0.003, betas=(0.9, 0.999), weight_decay=0.1
     )
     # For finetuning, use SGD with momentum
     # optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
@@ -223,9 +227,9 @@ def main(args):
     print("Start training")
     start_time = time.time()
     for epoch in range(num_epochs):
-        train_one_epoch(model, criterion, optimizer, dataset, device, epoch)
+        train_one_epoch(model, criterion, optimizer, data_loader, device, epoch)
         lr_scheduler.step()
-        evaluate(model, criterion, dataset_test, device)
+        evaluate(model, criterion, data_loader_test, device)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
@@ -241,9 +245,9 @@ def get_args_parser(add_help=True):
     parser.add_argument(
         "--data-path", default="./datasets", type=str, help="dataset path"
     )
-    parser.add_argument("--batch-size", default=1, type=int, help="batch size")
-    parser.add_argument("--epochs", default=1, type=int, help="number of epochs")
-    parser.add_argument("--workers", default=4, type=int, help="number of workers")
+    parser.add_argument("--batch-size", default=512, type=int, help="batch size")
+    parser.add_argument("--epochs", default=20, type=int, help="number of epochs")
+    parser.add_argument("--workers", default=12, type=int, help="number of workers")
     parser.add_argument("--print-freq", default=10, type=int, help="print frequency")
     return parser
 

@@ -19,7 +19,7 @@ class EncoderBlock(nn.Module):
         super().__init__()
         self.ln_1 = nn.LayerNorm(hidden_dim, eps=1e-6)
         self.self_attention = nn.MultiheadAttention(
-            hidden_dim, num_heads, dropout=dropout
+            hidden_dim, num_heads, dropout=dropout, batch_first=True
         )
         self.dropout = nn.Dropout(p=dropout)
 
@@ -27,13 +27,13 @@ class EncoderBlock(nn.Module):
         self.mlp = torchvision.ops.MLP(
             hidden_dim,
             [mlp_dim, hidden_dim],
-            activation_layer=nn.ReLU,  # GELU
+            activation_layer=nn.GELU,  # GELU
             dropout=dropout,
         )
 
     def forward(self, input: torch.Tensor):
         torch._assert(
-            input.dim() == 2,
+            input.dim() == 3,
             f"Expected (batch_size, seq_length, hidden_dim) got {input.shape}",
         )
         x = self.ln_1(input)
@@ -58,7 +58,7 @@ class Encoder(nn.Module):
     ):
         super().__init__()
         self.pos_embedding = nn.Parameter(
-            torch.empty(seq_length, hidden_dim).normal_(std=0.02)
+            torch.empty(1, seq_length, hidden_dim).normal_(std=0.02)
         )  # from BERT
         self.dropout = nn.Dropout(p=dropout)
         layers: OrderedDict[str, nn.Module] = OrderedDict()
@@ -70,7 +70,7 @@ class Encoder(nn.Module):
 
     def forward(self, input: torch.Tensor):
         torch._assert(
-            input.dim() == 2,
+            input.dim() == 3,
             f"Expected (batch_size, seq_length, hidden_dim) got {input.shape}",
         )
         x = input + self.pos_embedding
@@ -112,7 +112,7 @@ class VisionTransformer(nn.Module):
         seq_length = (image_size // patch_size) ** 2
 
         # add a class token
-        self.class_token = nn.Parameter(torch.zeros(1, hidden_dim))
+        self.class_token = nn.Parameter(torch.zeros(1, 1, hidden_dim))
         seq_length += 1
 
         self.encoder = Encoder(
@@ -129,7 +129,7 @@ class VisionTransformer(nn.Module):
         self.heads = nn.Linear(hidden_dim, num_classes)
 
     def _process_input(self, x: torch.Tensor) -> torch.Tensor:
-        c, h, w = x.shape
+        n, c, h, w = x.shape
         p = self.patch_size
         torch._assert(
             h == self.image_size,
@@ -142,30 +142,32 @@ class VisionTransformer(nn.Module):
         n_h = h // p
         n_w = w // p
 
-        # (h, w) -> (hidden_dim, n_h, n_w)
+        # (n, c, h, w) -> (n, hidden_dim, n_h, n_w)
         x = self.conv_proj(x)
-        # (hidden_dim, n_h, n_w) -> (hidden_dim, (n_h * n_w))
-        x = x.reshape(self.hidden_dim, n_h * n_w)
+        # (n, hidden_dim, n_h, n_w) -> (n, hidden_dim, (n_h * n_w))
+        x = x.reshape(n, self.hidden_dim, n_h * n_w)
 
-        # (hidden_dim, (n_h * n_w)) -> ((n_h * n_w), hidden_dim)
-        # The self attention layer expects inputs in the format (S, E)
-        # where S is the source sequence length, E is the
+        # (n, hidden_dim, (n_h * n_w)) -> (n, (n_h * n_w), hidden_dim)
+        # The self attention layer expects inputs in the format (N, S, E)
+        # where S is the source sequence length, N is the batch size, E is the
         # embedding dimension
-        x = x.permute(1, 0)
+        x = x.permute(0, 2, 1)
 
         return x
 
     def forward(self, x: torch.Tensor):
         # Reshape and permute the input tensor
         x = self._process_input(x)
+        n = x.shape[0]
 
-        # prepend the class token
-        x = torch.cat([self.class_token.view(1, -1), x])
+        # Expand the class token to the full batch
+        batch_class_token = self.class_token.expand(n, -1, -1)
+        x = torch.cat([batch_class_token, x], dim=1)
 
         x = self.encoder(x)
 
         # Classifier "token" as used by standard language architectures
-        x = x[0]
+        x = x[:, 0]
 
         x = self.heads(x)
 
